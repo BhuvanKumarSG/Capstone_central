@@ -1,0 +1,24 @@
+# Node (React)
+frontend/node_modules/
+frontend/build/
+frontend/.next/
+frontend/dist/
+frontend/.env
+
+# Python (FastAPI)
+backend/venv/
+backend/__pycache__/
+backend/*.pyc
+backend/.env
+
+# Database
+*.sqlite3
+
+# Logs
+*.log
+
+# OS / Editor files
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
