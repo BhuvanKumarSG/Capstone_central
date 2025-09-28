@@ -43,7 +43,7 @@ Make sure you have Node.js and npm (or yarn) installed on your machine.
 
 1.  **Clone the repo**
     ```sh
-    git clone [https://github.com/BhuvanKumarSG/Capstone_central](https://github.com/BhuvanKumarSG/Capstone_central)
+    git clone https://github.com/BhuvanKumarSG/Capstone_central
     ```
 2.  **Navigate to the project directory**
     ```sh
