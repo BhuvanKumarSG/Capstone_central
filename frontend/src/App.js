@@ -1,99 +1,260 @@
-import { useState } from "react";
-import { BrowserRouter as Router, Routes, Route, useNavigate } from "react-router-dom";
-import axios from "axios";
+import React, { useState, useRef, useCallback } from 'react';
+import './App.css';
 
-function Home() {
-  const navigate = useNavigate();
-  const cardStyle = {
-    border: "1px solid #ccc",
-    borderRadius: "8px",
-    padding: "24px",
-    margin: "16px 0",
-    boxShadow: "0 2px 8px rgba(0,0,0,0.07)",
-    cursor: "pointer",
-    background: "#f9f9f9",
-    textAlign: "center",
-    fontSize: "18px",
-    transition: "box-shadow 0.2s"
-  };
-  return (
-    <div style={{ padding: "20px", maxWidth: 600, margin: "auto" }}>
-      <h1>DeepSync</h1>
-      <div style={cardStyle} onClick={() => navigate("/audio-gen")}>Sample Audio Input & Transcript → Generate New Audio</div>
-      <div style={cardStyle} onClick={() => navigate("/video-gen")}>Sample Video & Transcript → Generate New Video</div>
-      <div style={cardStyle} onClick={() => navigate("/ai-check")}>Check if Video is AI Generated</div>
-    </div>
-  );
-}
+// --- Reusable SVG Icons ---
+const UploadIcon = () => (
+    <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="upload-icon">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line x1="12" y1="3" x2="12" y2="15" />
+    </svg>
+);
+const VideoIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="23 7 16 12 23 17 23 7"></polygon><rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect></svg>);
+const AudioIcon = () => (<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M12 19.5V4.5M8 10.5l-4 4 4 4M16 10.5l4 4-4 4"></path></svg>);
 
-function AudioGenPage() {
-  const [status, setStatus] = useState("");
-  const handleClick = async () => {
-    try {
-      const res = await axios.post("http://localhost:8000/api/audio-gen", {});
-      setStatus(res.data.message);
-    } catch (err) {
-      setStatus("Connection failed.");
+
+// --- Modal Components (No Changes) ---
+const TeamModal = ({ onClose }) => ( <div className="modal-overlay" onClick={onClose}><div className="modal-content" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={onClose}>&times;</button><h2>Our Team</h2><div className="team-grid"><div className="team-member"><img src="https://placehold.co/100x100/607d8b/ffffff?text=BK" alt="Bhuvan Kumar S G"/><h3>Bhuvan Kumar S G</h3><p>1BM22CD018</p></div><div className="team-member"><img src="https://placehold.co/100x100/607d8b/ffffff?text=SD" alt="S Danush"/><h3>S Danush</h3><p>1BM22CD052</p></div><div className="team-member"><img src="https://placehold.co/100x100/607d8b/ffffff?text=SA" alt="Srujana A Rao"/><h3>Srujana A Rao</h3><p>1BM22CD062</p></div><div className="team-member"><img src="https://placehold.co/100x100/607d8b/ffffff?text=SBR" alt="Dr. Shambhavi B R"/><h3>Dr. Shambhavi B R</h3><p>Team Guide</p></div></div></div></div> );
+const HowItWorksModal = ({ onClose }) => ( <div className="modal-overlay" onClick={onClose}><div className="modal-content" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={onClose}>&times;</button><h2>How It Works</h2><div className="how-it-works-content"><h4>Step 1: Upload Your Source Video</h4><p>Start by uploading the primary video file you want to modify. This will be the visual base for your new content.</p><h4>Step 2: Provide the Audio Source</h4><p>Upload a sample audio file. Our AI will analyze the voice characteristics to generate new audio in the same voice.</p><h4>Step 3: Enter Your Transcript</h4><p>Provide the text script that you want the person in the video to say. The AI will generate audio from this script and sync the lip movements in the video.</p><h4>Step 4: Generate!</h4><p>Click the generate button and let our AI do the magic. In a few moments, you'll have a new video with perfectly synced audio and visuals.</p></div></div></div> );
+
+// --- Landing Page Component (No Changes) ---
+const LandingPage = ({ onGetStarted }) => ( <main className="hero-section"><h1>Transform your content with <span className="highlight">DeepSync</span></h1><p>Harness the power of AI to seamlessly sync your videos with custom audio and scripts. Create engaging content that captivates your audience with perfect lip-sync technology.</p><button className="cta-button" onClick={onGetStarted}>Let's Get Started &rarr;</button><div className="features-grid"><div className="feature-card"><div className="feature-icon">📝</div><h3>AI-Powered Sync</h3><p>Advanced AI algorithms ensure perfect lip-sync between your video and audio content with precision timing.</p></div><div className="feature-card"><div className="feature-icon">🎬</div><h3>Script Integration</h3><p>Seamlessly integrate custom scripts with your video content for enhanced storytelling and engagement.</p></div><div className="feature-card"><div className="feature-icon">⏱️</div><h3>Hassle-Free Video Generation</h3><p>Simple, intuitive process that delivers professional results without the complexity of traditional video editing.</p></div></div></main> );
+
+// --- NEW Reusable DropZone Component ---
+const DropZone = ({ onFileSelect, accept, title, supportedFormats, selectedFile }) => {
+    const fileInputRef = useRef(null);
+    const [isDragging, setIsDragging] = useState(false);
+
+    const handleFileChange = (e) => {
+        if (e.target.files && e.target.files[0]) {
+            onFileSelect(e.target.files[0]);
+        }
+    };
+
+    const handleDragOver = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(true);
+    }, []);
+    
+    const handleDragLeave = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(false);
+    }, []);
+
+    const handleDrop = useCallback((e) => {
+        e.preventDefault();
+        setIsDragging(false);
+        if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+            onFileSelect(e.dataTransfer.files[0]);
+        }
+    }, [onFileSelect]);
+
+    const handleClick = () => {
+        fileInputRef.current.click();
+    };
+
+    return (
+        <div className="upload-box">
+            <h4>{title}</h4>
+            <div 
+                className={`drop-zone ${isDragging ? 'active' : ''}`}
+                onClick={handleClick}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+            >
+                <input
+                    type="file"
+                    ref={fileInputRef}
+                    onChange={handleFileChange}
+                    accept={accept}
+                    style={{ display: 'none' }}
+                />
+                {selectedFile ? (
+                    <div className="file-info">
+                        <p>{selectedFile.name}</p>
+                        <span>File selected. Click to replace.</span>
+                    </div>
+                ) : (
+                    <>
+                        <UploadIcon />
+                        <p>Click to upload or drag and drop</p>
+                        <span>Supports {supportedFormats}</span>
+                    </>
+                )}
+            </div>
+        </div>
+    );
+};
+
+// --- NEW Asset Library Item ---
+const AssetItem = ({ file }) => {
+    const isVideo = file.type.startsWith('video/');
+    const formatFileSize = (bytes) => {
+        if (bytes === 0) return '0 Bytes';
+        const k = 1024;
+        const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+        const i = Math.floor(Math.log(bytes) / Math.log(k));
+        return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
     }
-  };
-  return (
-    <div style={{ padding: 20, maxWidth: 500, margin: "auto" }}>
-      <h2>Generate New Audio</h2>
-      <button onClick={handleClick}>Connect to Audio API</button>
-      <p>{status}</p>
-    </div>
-  );
-}
 
-function VideoGenPage() {
-  const [status, setStatus] = useState("");
-  const handleClick = async () => {
-    try {
-      const res = await axios.post("http://localhost:8000/api/video-gen", {});
-      setStatus(res.data.message);
-    } catch (err) {
-      setStatus("Connection failed.");
-    }
-  };
-  return (
-    <div style={{ padding: 20, maxWidth: 500, margin: "auto" }}>
-      <h2>Generate New Video</h2>
-      <button onClick={handleClick}>Connect to Video API</button>
-      <p>{status}</p>
-    </div>
-  );
-}
+    return (
+        <div className="asset-item">
+            <div className="asset-icon">{isVideo ? <VideoIcon /> : <AudioIcon />}</div>
+            <div className="asset-details">
+                <span className="asset-name">{file.name}</span>
+                <span className="asset-size">{formatFileSize(file.size)}</span>
+            </div>
+        </div>
+    );
+};
 
-function AICheckPage() {
-  const [status, setStatus] = useState("");
-  const handleClick = async () => {
-    try {
-      const res = await axios.post("http://localhost:8000/api/ai-check", {});
-      setStatus(res.data.message);
-    } catch (err) {
-      setStatus("Connection failed.");
-    }
-  };
-  return (
-    <div style={{ padding: 20, maxWidth: 500, margin: "auto" }}>
-      <h2>Check if Video is AI Generated</h2>
-      <button onClick={handleClick}>Connect to AI Check API</button>
-      <p>{status}</p>
-    </div>
-  );
-}
+
+// --- UPDATED UploaderPage Component (with POST method fix) ---
+const UploaderPage = () => {
+    const [videoFile, setVideoFile] = useState(null);
+    const [audioFile, setAudioFile] = useState(null);
+    const [script, setScript] = useState("");
+    const [isChecking, setIsChecking] = useState(false);
+
+    const isGenerateDisabled = !videoFile || !audioFile || !script.trim();
+
+    const handleGenerate = async () => {
+        if (isGenerateDisabled) {
+            alert("Please upload a video, an audio file, and enter a script before generating.");
+            return;
+        }
+
+        setIsChecking(true);
+
+        const backendUrl = "http://localhost:8000/api";
+        // NOTE: I've updated the check endpoint to match your old code ('ai-check')
+        const endpoints = [
+            { name: 'API Check', url: `${backendUrl}/ai-check` }, 
+            { name: 'Audio Gen', url: `${backendUrl}/audio-gen` },
+            { name: 'Video Gen', url: `${backendUrl}/video-gen` }
+        ];
+
+        let statusReport = "API Connection Status:\n\n";
+
+        try {
+            //  =============== CHANGE IS HERE ===============
+            // We now tell fetch to use the 'POST' method for each request.
+            const results = await Promise.allSettled(
+                endpoints.map(ep => fetch(ep.url, {
+                    method: 'POST', // Specify the POST method
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({}) // Send an empty JSON object, as in your axios example
+                }))
+            );
+            // ============================================
+
+            results.forEach((result, index) => {
+                const endpointName = endpoints[index].name;
+                if (result.status === 'fulfilled' && result.value.ok) {
+                    statusReport += `✅ ${endpointName}: Connected Successfully\n`;
+                } else {
+                    statusReport += `❌ ${endpointName}: Connection Failed\n`;
+                }
+            });
+
+        } catch (error) {
+            statusReport += "An unexpected error occurred while checking APIs.";
+            console.error("API check error:", error);
+        } finally {
+            setIsChecking(false);
+            alert(statusReport);
+        }
+
+        console.log("Generating with the following assets:");
+        console.log("Video:", videoFile.name);
+        console.log("Audio:", audioFile.name);
+        console.log("Script:", script);
+    };
+
+    const uploadedAssets = [videoFile, audioFile].filter(Boolean);
+
+    return (
+        <main className="uploader-section">
+            <div className="uploader-header">
+                <h2>Create Your Video</h2>
+                <p>Upload your content and let our AI create perfectly synchronized videos</p>
+            </div>
+            <div className="uploader-grid">
+                <div className="upload-column">
+                    <DropZone 
+                        onFileSelect={setVideoFile} 
+                        accept="video/mp4,video/mov" 
+                        title="1. Upload Video" 
+                        supportedFormats="MP4, MOV"
+                        selectedFile={videoFile}
+                    />
+                    <DropZone 
+                        onFileSelect={setAudioFile} 
+                        accept="audio/mpeg,audio/wav" 
+                        title="2. Upload Audio" 
+                        supportedFormats="MP3, WAV"
+                        selectedFile={audioFile}
+                    />
+                    <div className="upload-box">
+                        <h4>3. Script</h4>
+                        <textarea 
+                            className="script-textarea" 
+                            placeholder="Enter your script here..."
+                            value={script}
+                            onChange={(e) => setScript(e.target.value)}
+                        />
+                        <p className="script-description">Write the script that will guide the AI synchronization process</p>
+                    </div>
+                    <button 
+                        className="generate-button" 
+                        onClick={handleGenerate} 
+                        disabled={isGenerateDisabled || isChecking}
+                    >
+                        {isChecking ? 'Checking APIs...' : 'Generate Video'}
+                    </button>
+                </div>
+                <div className="library-column">
+                    <div className="asset-library">
+                        <h4>Your Asset Library</h4>
+                        {uploadedAssets.length > 0 ? (
+                            <div className="asset-list">
+                                {uploadedAssets.map(file => <AssetItem key={file.name + file.size} file={file} />)}
+                            </div>
+                        ) : (
+                            <p className="empty-library-text">Your uploaded video and audio files will appear here.</p>
+                        )}
+                    </div>
+                </div>
+            </div>
+        </main>
+    );
+};
+
 
 function App() {
+  const [page, setPage] = useState('landing');
+  const [showTeamModal, setShowTeamModal] = useState(false);
+  const [showHowItWorksModal, setShowHowItWorksModal] = useState(false);
+
   return (
-    <Router>
-      <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/audio-gen" element={<AudioGenPage />} />
-        <Route path="/video-gen" element={<VideoGenPage />} />
-        <Route path="/ai-check" element={<AICheckPage />} />
-      </Routes>
-    </Router>
+    <div className="app-container">
+      {showTeamModal && <TeamModal onClose={() => setShowTeamModal(false)} />}
+      {showHowItWorksModal && <HowItWorksModal onClose={() => setShowHowItWorksModal(false)} />}
+
+      <header className="navbar">
+        <div className="logo" onClick={() => setPage('landing')} style={{cursor: 'pointer'}}>DeepSync</div>
+        <nav className="nav-links">
+          <button className="nav-button" onClick={() => setShowHowItWorksModal(true)}>How it Works</button>
+          <button className="nav-button" onClick={() => setShowTeamModal(true)}>Our Team</button>
+        </nav>
+      </header>
+      
+      {page === 'landing' && <LandingPage onGetStarted={() => setPage('uploader')} />}
+      {page === 'uploader' && <UploaderPage />}
+    </div>
   );
 }
 
 export default App;
+
