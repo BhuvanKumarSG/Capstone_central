@@ -322,6 +322,11 @@ function App() {
 
     return (
         <div className="app-container">
+          <div className="stars-container">
+                <div id="stars1"></div>
+                <div id="stars2"></div>
+                <div id="stars1"></div>
+            </div>
             {showTeamModal && <TeamModal onClose={() => setShowTeamModal(false)} />}
             {showHowItWorksModal && <HowItWorksModal onClose={() => setShowHowItWorksModal(false)} />}
 

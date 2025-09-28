@@ -350,3 +350,110 @@ a:hover { color: var(--highlight-color); }
         grid-template-columns: 1fr;
     }
 }
+/* --- FINAL CORRECTION FOR SEAMLESS DYNAMIC PARALLAX BACKGROUND --- */
+
+.stars-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -10;
+    overflow: hidden;
+}
+
+#stars1, #stars2, #stars3 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+}
+
+/* This is the new part that creates the seamless copy of the stars */
+#stars1::after, #stars2::after, #stars3::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    /* This positions the copied stars exactly one animation-length below */
+    top: 500px; 
+}
+
+/* --- FINAL CORRECTION FOR SEAMLESS DYNAMIC PARALLAX BACKGROUND --- */
+
+.stars-container {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    z-index: -5;
+    overflow: hidden;
+}
+
+#stars1, #stars2 {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: transparent;
+}
+
+/* This creates the seamless copy for both star layers */
+#stars1::after, #stars2::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 500px; /* This positions the copied stars below */
+}
+
+/* Layer 1: Smallest, fastest stars */
+#stars1 {
+    width: 1px;
+    height: 1px;
+    animation: animateStars 20s linear infinite;
+    box-shadow: 
+        10vw 83vh #FFF, 5vw 1vh #FFF, 19vw 6vh #FFF, 2vw 96vh #FFF, 
+        82vw 3vh #FFF, 51vw 38vh #FFF, 59vw 9vh #FFF, 66vw 91vh #FFF, 
+        2vw 25vh #FFF, 88vw 32vh #FFF, 54vw 63vh #FFF, 1vw 18vh #FFF,
+        91vw 85vh #FFF, 15vw 55vh #FFF, 6vw 7vh #FFF, 99vw 22vh #FFF;
+}
+#stars1::after {
+    width: 1px;
+    height: 1px;
+    box-shadow: 
+        10vw 83vh #FFF, 5vw 1vh #FFF, 19vw 6vh #FFF, 2vw 96vh #FFF, 
+        82vw 3vh #FFF, 51vw 38vh #FFF, 59vw 9vh #FFF, 66vw 91vh #FFF, 
+        2vw 25vh #FFF, 88vw 32vh #FFF, 54vw 63vh #FFF, 1vw 18vh #FFF,
+        91vw 85vh #FFF, 15vw 55vh #FFF, 6vw 7vh #FFF, 99vw 22vh #FFF;
+}
+
+/* Layer 2: Medium-sized, medium-speed stars */
+#stars2 {
+    width: 2px;
+    height: 2px;
+    animation: animateStars 40s linear infinite;
+    box-shadow: 
+        11vw 4vh #FFF, 7vw 3vh #FFF, 82vw 8vh #FFF, 53vw 38vh #FFF, 
+        6vw 93vh #FFF, 53vw 95vh #FFF, 57vw 80vh #FFF, 12vw 82vh #FFF, 
+        9vw 7vh #FFF, 88vw 38vh #FFF, 53vw 92vh #FFF, 62vw 80vh #FFF;
+}
+#stars2::after {
+    width: 2px;
+    height: 2px;
+    box-shadow: 
+        11vw 4vh #FFF, 7vw 3vh #FFF, 82vw 8vh #FFF, 53vw 38vh #FFF, 
+        6vw 93vh #FFF, 53vw 95vh #FFF, 57vw 80vh #FFF, 12vw 82vh #FFF, 
+        9vw 7vh #FFF, 88vw 38vh #FFF, 53vw 92vh #FFF, 62vw 80vh #FFF;
+}
+
+@keyframes animateStars {
+    from {
+        transform: translateY(0px);
+    }
+    to {
+        transform: translateY(-500px);
+    }
+}
