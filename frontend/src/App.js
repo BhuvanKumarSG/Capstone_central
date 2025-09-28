@@ -1,4 +1,4 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import './App.css';
 
 // --- Reusable SVG Icons ---
@@ -18,7 +18,7 @@ const HowItWorksModal = ({ onClose }) => ( <div className="modal-overlay" onClic
 // --- Landing Page Component (No Changes) ---
 const LandingPage = ({ onGetStarted }) => ( <main className="hero-section"><h1>Transform your content with <span className="highlight">DeepSync</span></h1><p>Go beyond simple sync. Clone a person's likeness and voice, creating a reusable digital avatar. Generate infinite new video content on demand, perfectly animated and synced to your custom scripts.</p><button className="cta-button" onClick={onGetStarted}>Let's Get Started &rarr;</button><div className="features-grid"><div className="feature-card"><div className="feature-icon">📝</div><h3>AI-Powered Sync</h3><p>Our advanced AI analyzes your video to build a photorealistic digital clone. This captures the person's unique likeness, creating a reusable asset for all future content.</p></div><div className="feature-card"><div className="feature-icon">🎬</div><h3>Script Driven Animation</h3><p>Animate your digital avatar with just a script. Our technology generates a natural voice and precise facial movements, transforming your text into a complete, ready-to-use video performance.</p></div><div className="feature-card"><div className="feature-icon">⏱️</div><h3>Hassle-Free Video Generation</h3><p>Simple, intuitive process that delivers professional results without the complexity of traditional video editing.</p></div></div></main> );
 
-// --- NEW Reusable DropZone Component ---
+// --- Reusable DropZone Component ---
 const DropZone = ({ onFileSelect, accept, title, supportedFormats, selectedFile }) => {
     const fileInputRef = useRef(null);
     const [isDragging, setIsDragging] = useState(false);
@@ -85,7 +85,7 @@ const DropZone = ({ onFileSelect, accept, title, supportedFormats, selectedFile 
     );
 };
 
-// --- NEW Asset Library Item ---
+// --- Asset Library Item Component ---
 const AssetItem = ({ file }) => {
     const isVideo = file.type.startsWith('video/');
     const formatFileSize = (bytes) => {
@@ -108,8 +108,8 @@ const AssetItem = ({ file }) => {
 };
 
 
-// --- UPDATED UploaderPage Component (with POST method fix) ---
-const UploaderPage = () => {
+// --- UploaderPage Component ---
+const UploaderPage = ({ onGenerateStart, onGenerateFinish }) => {
     const [videoFile, setVideoFile] = useState(null);
     const [audioFile, setAudioFile] = useState(null);
     const [script, setScript] = useState("");
@@ -126,28 +126,23 @@ const UploaderPage = () => {
         setIsChecking(true);
 
         const backendUrl = "http://localhost:8000/api";
-        // NOTE: I've updated the check endpoint to match your old code ('ai-check')
         const endpoints = [
-            { name: 'API Check', url: `${backendUrl}/ai-check` }, 
+            { name: 'API Check', url: `${backendUrl}/ai-check` },
             { name: 'Audio Gen', url: `${backendUrl}/audio-gen` },
             { name: 'Video Gen', url: `${backendUrl}/video-gen` }
         ];
 
         let statusReport = "API Connection Status:\n\n";
+        let allConnected = true;
 
         try {
-            //  =============== CHANGE IS HERE ===============
-            // We now tell fetch to use the 'POST' method for each request.
             const results = await Promise.allSettled(
                 endpoints.map(ep => fetch(ep.url, {
-                    method: 'POST', // Specify the POST method
-                    headers: {
-                        'Content-Type': 'application/json'
-                    },
-                    body: JSON.stringify({}) // Send an empty JSON object, as in your axios example
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({})
                 }))
             );
-            // ============================================
 
             results.forEach((result, index) => {
                 const endpointName = endpoints[index].name;
@@ -155,23 +150,33 @@ const UploaderPage = () => {
                     statusReport += `✅ ${endpointName}: Connected Successfully\n`;
                 } else {
                     statusReport += `❌ ${endpointName}: Connection Failed\n`;
+                    allConnected = false;
                 }
             });
 
         } catch (error) {
             statusReport += "An unexpected error occurred while checking APIs.";
+            allConnected = false;
             console.error("API check error:", error);
         } finally {
             setIsChecking(false);
             alert(statusReport);
+
+            if (allConnected) {
+                console.log("All APIs connected. Starting generation process...");
+                console.log("Video:", videoFile.name);
+                console.log("Audio:", audioFile.name);
+                console.log("Script:", script);
+                
+                onGenerateStart();
+
+                setTimeout(() => {
+                    onGenerateFinish();
+                }, 5000); 
+            }
         }
-
-        console.log("Generating with the following assets:");
-        console.log("Video:", videoFile.name);
-        console.log("Audio:", audioFile.name);
-        console.log("Script:", script);
     };
-
+    
     const uploadedAssets = [videoFile, audioFile].filter(Boolean);
 
     return (
@@ -231,7 +236,75 @@ const UploaderPage = () => {
     );
 };
 
-// --- NEW Footer Component ---
+// --- Processing Page Component ---
+const ProcessingPage = () => {
+    const [progress, setProgress] = useState(0);
+
+    useEffect(() => {
+        const interval = setInterval(() => {
+            setProgress(prev => {
+                if (prev >= 100) {
+                    clearInterval(interval);
+                    return 100;
+                }
+                return prev + 1;
+            });
+        }, 40); 
+
+        return () => clearInterval(interval);
+    }, []);
+
+    return (
+        <main className="processing-page-container">
+            <div className="processing-icon">
+                <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"></path><circle cx="12" cy="13" r="3"></circle></svg>
+            </div>
+            <h2>Processing your video...</h2>
+            <p>AI analysis and generates content according to your script.</p>
+            <div className="progress-bar-container">
+                <div className="progress-bar" style={{ width: `${progress}%` }}></div>
+            </div>
+            <span>{progress}% complete</span>
+        </main>
+    );
+};
+
+
+// --- Results Page Component ---
+const ResultsPage = ({ onRestart }) => {
+    return (
+        <main className="results-page-container">
+            <h2>Your Generated Video</h2>
+            <div className="results-grid">
+                <div className="video-player-mockup">
+                    <div className="play-button-mockup">
+                        <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                    </div>
+                    <p>Generated Video Ready</p>
+                </div>
+                <div className="details-and-actions">
+                    <div className="video-details">
+                        <h4>Video Details</h4>
+                        <div className="details-grid">
+                            <span>File Size:</span><strong>24.5 MB</strong>
+                            <span>Format:</span><strong>MP4</strong>
+                            <span>Duration:</span><strong>01:32</strong>
+                            <span>Processing Time:</span><strong>4m 15s</strong>
+                        </div>
+                    </div>
+                    <button onClick={onRestart} className="create-another-button">
+                        Create Another Video
+                    </button>
+                    <div className="note-box">
+                        <strong>Note:</strong> The maximum duration for generated videos is 1 minute.
+                    </div>
+                </div>
+            </div>
+        </main>
+    );
+};
+
+// --- Footer Component ---
 const Footer = () => (
     <footer className="footer">
         <p>&copy; 2025 DeepSync. All Rights Reserved.</p>
@@ -239,34 +312,37 @@ const Footer = () => (
 );
 
 function App() {
-  const [page, setPage] = useState('landing');
-  const [showTeamModal, setShowTeamModal] = useState(false);
-  const [showHowItWorksModal, setShowHowItWorksModal] = useState(false);
+    const [page, setPage] = useState('landing');
+    const [showTeamModal, setShowTeamModal] = useState(false);
+    const [showHowItWorksModal, setShowHowItWorksModal] = useState(false);
 
-  return (
-    <div className="app-container">
-      {showTeamModal && <TeamModal onClose={() => setShowTeamModal(false)} />}
-      {showHowItWorksModal && <HowItWorksModal onClose={() => setShowHowItWorksModal(false)} />}
+    const handleGenerateStart = () => setPage('processing');
+    const handleGenerateFinish = () => setPage('results');
+    const handleRestart = () => setPage('uploader');
 
-      <header className="navbar">
-        {/* --- ADDITION: Replaced text with an image tag for the logo --- */}
-        <div className="logo" onClick={() => setPage('landing')} style={{cursor: 'pointer'}}>
-            <img src="/nav.png" alt="DeepSync" className="logo-image" />
+    return (
+        <div className="app-container">
+            {showTeamModal && <TeamModal onClose={() => setShowTeamModal(false)} />}
+            {showHowItWorksModal && <HowItWorksModal onClose={() => setShowHowItWorksModal(false)} />}
+
+            <header className="navbar">
+                <div className="logo" onClick={() => setPage('landing')} style={{cursor: 'pointer'}}>
+                    <img src="/nav.png" alt="DeepSync" className="logo-image" />
+                </div>
+                <nav className="nav-links">
+                    <button className="nav-button" onClick={() => setShowHowItWorksModal(true)}>How it Works</button>
+                    <button className="nav-button" onClick={() => setShowTeamModal(true)}>Our Team</button>
+                </nav>
+            </header>
+            
+            {page === 'landing' && <LandingPage onGetStarted={() => setPage('uploader')} />}
+            {page === 'uploader' && <UploaderPage onGenerateStart={handleGenerateStart} onGenerateFinish={handleGenerateFinish} />}
+            {page === 'processing' && <ProcessingPage />}
+            {page === 'results' && <ResultsPage onRestart={handleRestart} />}
+
+            <Footer />
         </div>
-        <nav className="nav-links">
-          <button className="nav-button" onClick={() => setShowHowItWorksModal(true)}>How it Works</button>
-          <button className="nav-button" onClick={() => setShowTeamModal(true)}>Our Team</button>
-        </nav>
-      </header>
-      
-      {page === 'landing' && <LandingPage onGetStarted={() => setPage('uploader')} />}
-      {page === 'uploader' && <UploaderPage />}
-
-      {/* --- ADDITION: Place the new Footer component here --- */}
-      <Footer />
-    </div>
-  );
+    );
 }
 
 export default App;
-
