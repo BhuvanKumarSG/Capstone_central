@@ -16,7 +16,7 @@ const TeamModal = ({ onClose }) => ( <div className="modal-overlay" onClick={onC
 const HowItWorksModal = ({ onClose }) => ( <div className="modal-overlay" onClick={onClose}><div className="modal-content" onClick={e => e.stopPropagation()}><button className="modal-close" onClick={onClose}>&times;</button><h2>How It Works</h2><div className="how-it-works-content"><h4>Step 1: Upload Your Source Video</h4><p>Start by uploading the primary video file you want to modify. This will be the visual base for your new content.</p><h4>Step 2: Provide the Audio Source</h4><p>Upload a sample audio file. Our AI will analyze the voice characteristics to generate new audio in the same voice.</p><h4>Step 3: Enter Your Transcript</h4><p>Provide the text script that you want the person in the video to say. The AI will generate audio from this script and sync the lip movements in the video.</p><h4>Step 4: Generate!</h4><p>Click the generate button and let our AI do the magic. In a few moments, you'll have a new video with perfectly synced audio and visuals.</p></div></div></div> );
 
 // --- Landing Page Component (No Changes) ---
-const LandingPage = ({ onGetStarted }) => ( <main className="hero-section"><h1>Transform your content with <span className="highlight">DeepSync</span></h1><p>Harness the power of AI to seamlessly sync your videos with custom audio and scripts. Create engaging content that captivates your audience with perfect lip-sync technology.</p><button className="cta-button" onClick={onGetStarted}>Let's Get Started &rarr;</button><div className="features-grid"><div className="feature-card"><div className="feature-icon">📝</div><h3>AI-Powered Sync</h3><p>Advanced AI algorithms ensure perfect lip-sync between your video and audio content with precision timing.</p></div><div className="feature-card"><div className="feature-icon">🎬</div><h3>Script Integration</h3><p>Seamlessly integrate custom scripts with your video content for enhanced storytelling and engagement.</p></div><div className="feature-card"><div className="feature-icon">⏱️</div><h3>Hassle-Free Video Generation</h3><p>Simple, intuitive process that delivers professional results without the complexity of traditional video editing.</p></div></div></main> );
+const LandingPage = ({ onGetStarted }) => ( <main className="hero-section"><h1>Transform your content with <span className="highlight">DeepSync</span></h1><p>Go beyond simple sync. Clone a person's likeness and voice, creating a reusable digital avatar. Generate infinite new video content on demand, perfectly animated and synced to your custom scripts.</p><button className="cta-button" onClick={onGetStarted}>Let's Get Started &rarr;</button><div className="features-grid"><div className="feature-card"><div className="feature-icon">📝</div><h3>AI-Powered Sync</h3><p>Our advanced AI analyzes your video to build a photorealistic digital clone. This captures the person's unique likeness, creating a reusable asset for all future content.</p></div><div className="feature-card"><div className="feature-icon">🎬</div><h3>Script Driven Animation</h3><p>Animate your digital avatar with just a script. Our technology generates a natural voice and precise facial movements, transforming your text into a complete, ready-to-use video performance.</p></div><div className="feature-card"><div className="feature-icon">⏱️</div><h3>Hassle-Free Video Generation</h3><p>Simple, intuitive process that delivers professional results without the complexity of traditional video editing.</p></div></div></main> );
 
 // --- NEW Reusable DropZone Component ---
 const DropZone = ({ onFileSelect, accept, title, supportedFormats, selectedFile }) => {
@@ -231,6 +231,12 @@ const UploaderPage = () => {
     );
 };
 
+// --- NEW Footer Component ---
+const Footer = () => (
+    <footer className="footer">
+        <p>&copy; 2025 DeepSync. All Rights Reserved.</p>
+    </footer>
+);
 
 function App() {
   const [page, setPage] = useState('landing');
@@ -243,7 +249,10 @@ function App() {
       {showHowItWorksModal && <HowItWorksModal onClose={() => setShowHowItWorksModal(false)} />}
 
       <header className="navbar">
-        <div className="logo" onClick={() => setPage('landing')} style={{cursor: 'pointer'}}>DeepSync</div>
+        {/* --- ADDITION: Replaced text with an image tag for the logo --- */}
+        <div className="logo" onClick={() => setPage('landing')} style={{cursor: 'pointer'}}>
+            <img src="/nav.png" alt="DeepSync" className="logo-image" />
+        </div>
         <nav className="nav-links">
           <button className="nav-button" onClick={() => setShowHowItWorksModal(true)}>How it Works</button>
           <button className="nav-button" onClick={() => setShowTeamModal(true)}>Our Team</button>
@@ -252,6 +261,9 @@ function App() {
       
       {page === 'landing' && <LandingPage onGetStarted={() => setPage('uploader')} />}
       {page === 'uploader' && <UploaderPage />}
+
+      {/* --- ADDITION: Place the new Footer component here --- */}
+      <Footer />
     </div>
   );
 }
