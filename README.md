@@ -31,6 +31,13 @@ This project is the front-end interface built with:
 
 To get a local copy up and running, follow these simple steps.
 
+### Run using docker
+1. **Install docker desktop**
+2. **Run docker compose yaml file**
+   ```
+   docker compose up --build
+   ```
+
 ### Installation
 
 1.  **Clone the repo**
