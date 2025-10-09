@@ -31,40 +31,30 @@ This project is the front-end interface built with:
 
 To get a local copy up and running, follow these simple steps.
 
-### Prerequisites
-
-Make sure you have Node.js and npm (or yarn) installed on your machine.
-* npm
-    ```sh
-    npm install npm@latest -g
-    ```
-
 ### Installation
 
 1.  **Clone the repo**
     ```sh
     git clone https://github.com/BhuvanKumarSG/Capstone_central
     ```
-2.  **Navigate to the project directory**
+2.  **Install NPM packages in frontend**
     ```sh
-    cd deepsync
-    ```
-3.  **Install NPM packages**
-    ```sh
+    cd frontend
     npm install
     ```
-4.  **Run the application**
+3.  **Run the application**
     ```sh
     npm start
     ```
     The site will be available at `http://localhost:3000`.
-5. **Start the backend**
+4. **Start the backend**
    ```sh
+   cd backend
    pip install -r requirements.txt
    python main.py
    ```
 
-   Run this if it isnt connecting
+   Run this if it isn't connecting
    ```sh
    uvicorn main:app --reload
    ```
