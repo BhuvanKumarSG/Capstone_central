@@ -21,7 +21,7 @@ SWAY_SAMPLING_COEF = -1
 SPEED = 0.7
 DEVICE = None  # None -> let F5TTS choose (cuda/mps/cpu)
 
-USE_DURATION_MODEL = True
+USE_DURATION_MODEL = False
 
 # Fallback reference/gen values (kept for manual runs)
 REF_AUDIO = r"C:\Users\admin\Downloads\Test.wav"

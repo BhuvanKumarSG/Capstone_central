@@ -5,6 +5,10 @@ import subprocess
 import sys
 import os
 import uuid
+import time
+
+# Configure basic logging to ensure messages appear on the server terminal
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s %(message)s')
 
 
 # Which Python executable should be used to run the inference script.
@@ -21,6 +25,7 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],   # allow all methods (GET, POST, etc.)
     allow_headers=["*"],   # allow all headers
+    expose_headers=["Content-Disposition", "Content-Length"],
 )
 
 @app.get("/")
@@ -29,12 +34,13 @@ def root():
 
 # API endpoint for audio generation
 @app.post("/api/audio-gen")
-async def audio_gen(background_tasks: BackgroundTasks, audio: UploadFile | None = File(None), script: str = Form("")):
+async def audio_gen(background_tasks: BackgroundTasks, audio: UploadFile = File(...), script: str = Form("")):
     """Accept an uploaded audio file and a script, save them to a per-run
     temp directory, spawn `run_infer.py` with CLI args pointing to the
     saved audio and requested output path, and return immediately.
     """
     logging.info("Audio generation API called; saving uploaded assets and launching inference.")
+
 
     script_path = os.path.join(os.path.dirname(__file__), "run_infer.py")
 
@@ -89,9 +95,164 @@ async def audio_gen(background_tasks: BackgroundTasks, audio: UploadFile | None 
 
 # API endpoint for video generation
 @app.post("/api/video-gen")
-async def video_gen():
+async def video_gen(background_tasks: BackgroundTasks, video: UploadFile = File(...), audio: UploadFile | str | None = File(None), script: str = Form("")):
+    """Accept a video plus either (audio + script) or (script only).
+
+    Cases:
+    1) video + audio + script: send audio+script to the audio-gen flow (run_infer.py) to produce a generated audio, then run LatentSync with the provided video and generated audio.
+    2) video + script (no audio): extract audio from the uploaded video (ffmpeg), send that extracted audio + script to audio-gen flow, then run LatentSync with the video + generated audio.
+
+    The endpoint waits for both audio generation and latent-sync inference to finish and then returns the final MP4 as a streamed file.
+    """
     logging.info("Video generation API called.")
-    return {"message": "Video generation API connection successful."}
+
+    # Coerce incorrectly-typed multipart fields: some clients may send an
+    # empty string for the `audio` form field which FastAPI parses as a
+    # str. Normalize that to None so downstream code treats it as "no audio".
+    if isinstance(audio, str):
+        logging.info("Received audio field as string; treating as no file (audio=None)")
+        audio = None
+
+    runs_root = os.path.join(os.path.dirname(__file__), "runs")
+    os.makedirs(runs_root, exist_ok=True)
+    run_id = uuid.uuid4().hex
+    run_dir = os.path.join(runs_root, run_id)
+    os.makedirs(run_dir, exist_ok=True)
+
+    # Save uploaded video
+    try:
+        video_ext = os.path.splitext(video.filename)[1] or ".mp4"
+        saved_video = os.path.join(run_dir, "input_video" + video_ext)
+        with open(saved_video, "wb") as vf:
+            vf.write(await video.read())
+    except Exception as e:
+        logging.exception("Failed to save uploaded video: %s", e)
+        return {"error": "failed to save uploaded video"}
+
+    # If audio uploaded, save it; otherwise we'll extract from video
+    saved_input_audio = None
+    if audio:
+        try:
+            audio_ext = os.path.splitext(audio.filename)[1] or ".wav"
+            saved_input_audio = os.path.join(run_dir, "input_audio" + audio_ext)
+            logging.info("Saving uploaded audio to %s", saved_input_audio)
+            with open(saved_input_audio, "wb") as af:
+                data = await audio.read()
+                af.write(data)
+            logging.info("Saved uploaded audio (%d bytes)", os.path.getsize(saved_input_audio))
+        except Exception as e:
+            logging.exception("Failed to save uploaded audio: %s", e)
+            return {"error": "failed to save uploaded audio"}
+
+    # If no input audio, extract from video using ffmpeg
+    extracted_audio = os.path.join(run_dir, "extracted_audio.wav")
+    if saved_input_audio is None:
+        # Call ffmpeg to extract audio. Requires ffmpeg to be installed and in PATH.
+        ffmpeg_cmd = [
+            "ffmpeg",
+            "-y",
+            "-i",
+            saved_video,
+            "-vn",
+            "-acodec",
+            "pcm_s16le",
+            "-ar",
+            "44100",
+            "-ac",
+            "2",
+            extracted_audio,
+        ]
+        try:
+            logging.info("Extracting audio from video using ffmpeg: %s", " ".join(ffmpeg_cmd))
+            proc = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            logging.info("ffmpeg returncode=%s", proc.returncode)
+            if proc.stdout:
+                logging.info("ffmpeg stdout: %s", proc.stdout)
+            if proc.stderr:
+                logging.info("ffmpeg stderr: %s", proc.stderr)
+            if proc.returncode != 0:
+                logging.error("ffmpeg audio extraction failed (returncode %s)", proc.returncode)
+                return {"error": "failed to extract audio from video (ffmpeg error)", "details": proc.stderr}
+            saved_input_audio = extracted_audio
+            logging.info("Extracted audio saved to %s (size=%d bytes)", saved_input_audio, os.path.getsize(saved_input_audio))
+        except FileNotFoundError:
+            logging.exception("ffmpeg not found; required to extract audio from video.")
+            return {"error": "ffmpeg not found on server; cannot extract audio"}
+        except Exception as e:
+            logging.exception("Audio extraction failed: %s", e)
+            return {"error": "audio extraction failed", "details": str(e)}
+
+    # Start a background job to do any needed extraction/audio generation and
+    # then run LatentSync. Return immediately with a run_id so the frontend
+    # can poll /api/jobs/{run_id}/video for the final MP4.
+    script_path = os.path.join(os.path.dirname(__file__), "run_infer.py")
+    out_wav = os.path.join(run_dir, "generated_out.wav")
+    out_mp4 = os.path.join(run_dir, "final_output.mp4")
+
+    def _run_video_job():
+        logging.info("Background video job started: %s", run_id)
+
+        # If we don't have an input audio (client didn't send), extract it
+        local_input_audio = saved_input_audio
+        if local_input_audio is None:
+            # extract audio using ffmpeg
+            try:
+                logging.info("(bg) extracting audio from %s", saved_video)
+                proc = subprocess.run([
+                    "ffmpeg", "-y", "-i", saved_video, "-vn", "-acodec", "pcm_s16le", "-ar", "44100", "-ac", "2", extracted_audio
+                ], capture_output=True, text=True)
+                logging.info("(bg) ffmpeg rc=%s stdout=%s stderr=%s", proc.returncode, proc.stdout, proc.stderr)
+                if proc.returncode != 0:
+                    logging.error("(bg) ffmpeg failed for run %s", run_id)
+                    return
+                local_input_audio = extracted_audio
+            except Exception:
+                logging.exception("(bg) audio extraction failed for run %s", run_id)
+                return
+
+        # Call run_infer.py to generate the final audio if needed (if the
+        # provided audio is not already the final generated file). In our
+        # integration the client normally uploads a generated audio blob so
+        # this step is a no-op when audio was provided.
+        try:
+            audio_cmd = [INFER_PYTHON, script_path, "--ref-audio", local_input_audio, "--out-wav", out_wav]
+            if script:
+                audio_cmd += ["--gen-text", script]
+            logging.info("(bg) running audio gen: %s", " ".join(audio_cmd))
+            proc = subprocess.run(audio_cmd, cwd=os.path.dirname(__file__), capture_output=True, text=True)
+            logging.info("(bg) run_infer rc=%s stdout=%s stderr=%s", proc.returncode, proc.stdout, proc.stderr)
+            if proc.returncode != 0:
+                logging.error("(bg) audio generation failed for run %s", run_id)
+                return
+            if not os.path.exists(out_wav):
+                logging.error("(bg) expected out_wav not found for run %s", run_id)
+                return
+        except Exception:
+            logging.exception("(bg) audio generation subprocess failed for run %s", run_id)
+            return
+
+        # Run LatentSync
+        latentsync_script = os.path.join(os.path.dirname(__file__), "latentsync", "run_inference_hardcoded.py")
+        latentsync_venv_py = os.path.join(os.path.dirname(__file__), "latentsync", "latentsync-venv", "Scripts", "python.exe")
+        latentsync_python = latentsync_venv_py if os.path.exists(latentsync_venv_py) else (INFER_PYTHON if INFER_PYTHON else sys.executable)
+        latentsync_cwd = os.path.join(os.path.dirname(__file__), "latentsync")
+        latentsync_cmd = [latentsync_python, latentsync_script, "--video-path", saved_video, "--audio-path", out_wav, "--video-out-path", out_mp4]
+        try:
+            logging.info("(bg) running latentsync: %s (cwd=%s)", " ".join(latentsync_cmd), latentsync_cwd)
+            proc2 = subprocess.run(latentsync_cmd, cwd=latentsync_cwd, capture_output=True, text=True)
+            logging.info("(bg) latentsync rc=%s stdout=%s stderr=%s", proc2.returncode, proc2.stdout, proc2.stderr)
+            if proc2.returncode != 0:
+                logging.error("(bg) latentsync failed for run %s", run_id)
+                return
+            logging.info("(bg) latentsync finished for run %s, output=%s", run_id, out_mp4)
+        except Exception:
+            logging.exception("(bg) latentsync subprocess failed for run %s", run_id)
+            return
+
+    # start the background task and return immediately
+    background_tasks.add_task(_run_video_job)
+
+    return {"message": "Video generation started.", "run_id": run_id, "job_id": run_id}
 
 
 # API endpoint to retrieve generated audio for a run (returns 404 until file exists)
@@ -108,10 +269,62 @@ def get_job_audio(job_id: str):
     out_wav = os.path.join(run_dir, 'generated_out.wav')
 
     if os.path.exists(out_wav) and os.path.isfile(out_wav):
-        # Stream the file back to the client
-        return FileResponse(out_wav, media_type='audio/wav', filename='generated_out.wav')
+        # Stream the file back to the client. Set Content-Disposition to
+        # inline and add CORS expose headers so browsers can fetch the blob
+        # via XHR/fetch and access it from JavaScript.
+        resp = FileResponse(out_wav, media_type='audio/wav', filename='generated_out.wav')
+        # prefer explicit inline so browsers don't force a download when
+        # navigating to the URL; fetch() still works either way but some
+        # clients are sensitive to attachment vs inline semantics.
+        resp.headers['Content-Disposition'] = 'inline; filename="generated_out.wav"'
+        # Ensure frontend can access the response when fetched cross-origin.
+        resp.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+        resp.headers['Access-Control-Allow-Credentials'] = 'true'
+        resp.headers['Access-Control-Expose-Headers'] = 'Content-Disposition,Content-Length'
+        return resp
     else:
         # Let the client poll until the file appears
+        raise HTTPException(status_code=404, detail="not ready")
+
+
+@app.get("/api/jobs/{job_id}/video")
+def get_job_video(job_id: str):
+    """Serve the final output mp4 for the provided run_id when available.
+    Returns 404 until the file exists.
+    """
+    runs_root = os.path.join(os.path.dirname(__file__), "runs")
+    run_dir = os.path.join(runs_root, job_id)
+    out_mp4 = os.path.join(run_dir, 'final_output.mp4')
+
+    if os.path.exists(out_mp4) and os.path.isfile(out_mp4):
+        # Ensure the file is fully written (avoid serving a partially-written file)
+        # Some tools write files atomically, others write progressively; polling clients
+        # may observe the file as "exists" while it's still being written which can
+        # lead to Content-Length mismatches in the browser. Wait for the file size to
+        # stabilize before returning it.
+        stable_checks = 5
+        stable_interval = 0.2
+        last_size = -1
+        for i in range(stable_checks):
+            try:
+                size = os.path.getsize(out_mp4)
+            except Exception:
+                size = -1
+            logging.info("get_job_video: check %d/%d size=%d", i + 1, stable_checks, size)
+            if size == last_size and size > 0:
+                logging.info("get_job_video: file size stable (%d bytes) after %d checks", size, i + 1)
+                break
+            last_size = size
+            time.sleep(stable_interval)
+
+        resp = FileResponse(out_mp4, media_type='video/mp4', filename='final_output.mp4')
+        resp.headers['Content-Disposition'] = 'inline; filename="final_output.mp4"'
+        # CORS is configured globally via middleware; keep these for legacy clients
+        resp.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+        resp.headers['Access-Control-Allow-Credentials'] = 'true'
+        resp.headers['Access-Control-Expose-Headers'] = 'Content-Disposition,Content-Length'
+        return resp
+    else:
         raise HTTPException(status_code=404, detail="not ready")
 
 
