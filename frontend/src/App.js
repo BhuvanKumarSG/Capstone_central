@@ -520,7 +520,9 @@ const UploaderPage = ({ onGenerateStart, onGenerateFinish, mode = 'createVideo' 
     // Filter saved assets for display
     const savedVideoAssets = savedAssets.filter(a => a.type === 'video');
     const savedAudioAssets = savedAssets.filter(a => a.type ==='audio');
+  
 
+    
     return (
         <div className="uploader-section">
             <div className="uploader-header">

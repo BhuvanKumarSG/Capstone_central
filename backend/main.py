@@ -19,14 +19,24 @@ INFER_PYTHON = os.environ.get("INFER_PYTHON", DEFAULT_INFER_PYTHON if os.path.ex
 app = FastAPI()
 
 # Allow frontend (React) to talk to backend (FastAPI)
+# app.add_middleware(
+#     CORSMiddleware,
+#     allow_origins=["http://localhost:3000"],  # frontend URL
+#     allow_credentials=True,
+#     allow_methods=["*"],   # allow all methods (GET, POST, etc.)
+#     allow_headers=["*"],   # allow all headers
+#     expose_headers=["Content-Disposition", "Content-Length"],)
+
+# Allow frontend (React) to talk to backend (FastAPI)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # frontend URL
+    allow_origins=["*", "http://localhost:3000"], # Allows localhost AND all other domains
     allow_credentials=True,
-    allow_methods=["*"],   # allow all methods (GET, POST, etc.)
-    allow_headers=["*"],   # allow all headers
+    allow_methods=["*"],  # allow all methods (GET, POST, etc.)
+    allow_headers=["*"], 
     expose_headers=["Content-Disposition", "Content-Length"],
 )
+
 
 @app.get("/")
 def root():
@@ -67,11 +77,16 @@ async def audio_gen(background_tasks: BackgroundTasks, audio: UploadFile = File(
     def _run_infer_subprocess():
         # Build the command line to forward the saved audio and script to run_infer
         cmd = [INFER_PYTHON, script_path]
+        # include ref-audio only if present
         if saved_audio:
             cmd += ['--ref-audio', saved_audio]
-        if script:
-            cmd += ['--gen-text', script]
+        # Always pass --gen-text (may be empty) to ensure the inference
+        # script receives the intended generation text instead of falling
+        # back to internal defaults.
+        cmd += ['--gen-text', script or ""]
         cmd += ['--out-wav', out_wav]
+
+        logging.info("Invoking run_infer (audio-gen): %s", " ".join(cmd))
 
         try:
             proc = subprocess.run(cmd, cwd=os.path.dirname(__file__), capture_output=True, text=True)
@@ -239,11 +254,25 @@ async def video_gen(background_tasks: BackgroundTasks, video: UploadFile = File(
         latentsync_cmd = [latentsync_python, latentsync_script, "--video-path", saved_video, "--audio-path", out_wav, "--video-out-path", out_mp4]
         try:
             logging.info("(bg) running latentsync: %s (cwd=%s)", " ".join(latentsync_cmd), latentsync_cwd)
-            proc2 = subprocess.run(latentsync_cmd, cwd=latentsync_cwd, capture_output=True, text=True)
-            logging.info("(bg) latentsync rc=%s stdout=%s stderr=%s", proc2.returncode, proc2.stdout, proc2.stderr)
+            # Stream latentsync stdout/stderr to the server terminal in real-time
+            proc2 = subprocess.Popen(latentsync_cmd, cwd=latentsync_cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+            try:
+                if proc2.stdout is not None:
+                    for line in proc2.stdout:
+                        logging.info("(bg) latentsync: %s", line.rstrip())
+                proc2.wait()
+            except Exception:
+                logging.exception("(bg) error while streaming latentsync output for run %s", run_id)
+                try:
+                    proc2.kill()
+                except Exception:
+                    pass
+
+            logging.info("(bg) latentsync rc=%s", proc2.returncode)
             if proc2.returncode != 0:
                 logging.error("(bg) latentsync failed for run %s", run_id)
                 return
+
             logging.info("(bg) latentsync finished for run %s, output=%s", run_id, out_mp4)
         except Exception:
             logging.exception("(bg) latentsync subprocess failed for run %s", run_id)
@@ -256,8 +285,8 @@ async def video_gen(background_tasks: BackgroundTasks, video: UploadFile = File(
 
 
 # API endpoint to retrieve generated audio for a run (returns 404 until file exists)
-from fastapi.responses import FileResponse
-from fastapi import HTTPException
+from fastapi.responses import FileResponse, StreamingResponse
+from fastapi import HTTPException, Response
 
 @app.get("/api/jobs/{job_id}/audio")
 def get_job_audio(job_id: str):
@@ -326,6 +355,76 @@ def get_job_video(job_id: str):
         return resp
     else:
         raise HTTPException(status_code=404, detail="not ready")
+
+
+@app.get("/api/jobs/{job_id}/video/fallback")
+def get_job_video_fallback(job_id: str):
+    """Fallback endpoint: directly read the run folder and return any MP4 found.
+
+    Use this when the primary `/api/jobs/{job_id}/video` path errors but the
+    video file exists on disk. This is a pragmatic patch for development and
+    debugging; consider removing or restricting it in production.
+    """
+    runs_root = os.path.join(os.path.dirname(__file__), "runs")
+    run_dir = os.path.join(runs_root, job_id)
+    if not os.path.exists(run_dir) or not os.path.isdir(run_dir):
+        raise HTTPException(status_code=404, detail="run not found")
+
+    # Serve exactly the run's final_output.mp4. This fallback intentionally
+    # avoids guessing or picking other files — the run directory for the
+    # provided job_id must contain final_output.mp4.
+    final_mp4 = os.path.join(run_dir, 'final_output.mp4')
+    if not (os.path.exists(final_mp4) and os.path.isfile(final_mp4)):
+        raise HTTPException(status_code=404, detail="final_output.mp4 not found for run")
+
+    try:
+        size = os.path.getsize(final_mp4)
+    except Exception:
+        size = None
+
+    logging.info("Fallback video serve for run %s -> %s (size=%s) ", job_id, final_mp4, size)
+
+    # Use FileResponse which supports Range requests and HEAD automatically.
+    resp = FileResponse(final_mp4, media_type='video/mp4', filename=os.path.basename(final_mp4))
+    resp.headers['Content-Disposition'] = f'inline; filename="{os.path.basename(final_mp4)}"'
+    resp.headers['Access-Control-Allow-Origin'] = 'http://localhost:3000'
+    resp.headers['Access-Control-Allow-Credentials'] = 'true'
+    resp.headers['Access-Control-Expose-Headers'] = 'Content-Disposition,Content-Length'
+    if size is not None:
+        resp.headers['Content-Length'] = str(size)
+    return resp
+
+
+@app.head("/api/jobs/{job_id}/video/fallback")
+def head_job_video_fallback(job_id: str):
+    """Respond to HEAD requests for the fallback video URL. Some clients
+    prefer to probe existence via HEAD. Return 200 with the same headers
+    (Content-Length, Content-Disposition) when the file exists, otherwise 404.
+    """
+    runs_root = os.path.join(os.path.dirname(__file__), "runs")
+    run_dir = os.path.join(runs_root, job_id)
+    if not os.path.exists(run_dir) or not os.path.isdir(run_dir):
+        raise HTTPException(status_code=404, detail="run not found")
+
+    final_mp4 = os.path.join(run_dir, 'final_output.mp4')
+    if not (os.path.exists(final_mp4) and os.path.isfile(final_mp4)):
+        raise HTTPException(status_code=404, detail="final_output.mp4 not found for run")
+
+    try:
+        size = os.path.getsize(final_mp4)
+    except Exception:
+        size = None
+
+    headers = {
+        'Access-Control-Allow-Origin': 'http://localhost:3000',
+        'Access-Control-Allow-Credentials': 'true',
+        'Access-Control-Expose-Headers': 'Content-Disposition,Content-Length',
+    }
+    if size is not None:
+        headers['Content-Length'] = str(size)
+    headers['Content-Disposition'] = f'inline; filename="{os.path.basename(final_mp4)}"'
+
+    return Response(status_code=200, headers=headers)
 
 
 # Debug endpoint: list recent run IDs (useful for diagnosing client/server id mismatches)

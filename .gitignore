@@ -10,6 +10,14 @@ backend/venv/
 backend/__pycache__/
 backend/*.pyc
 backend/.env
+backend/f5_tts/__pycache__
+backend/latentsync/__pycache__/
+backend/latentsync/checkpoints/
+backend/temp/
+backend/assets/
+backend/latentsyn-venv/
+backend/jobs/
+
 
 # Database
 *.sqlite3
