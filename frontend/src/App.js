@@ -447,13 +447,23 @@ const UploaderPage = ({ onGenerateStart, onGenerateFinish, mode = 'createVideo' 
         // --- Upload files and script to backend (multipart/form-data) ---
         const backendUrl = "http://localhost:8000/api";
 
-    // Build FormData payload (audio + script). Do NOT send video to audio endpoint.
-    const form = new FormData();
-    if (audioFile) form.append('audio', audioFile);
-    form.append('script', script || '');
+        // Build FormData payload. For video generation include the video file;
+        // for audio-clone use the audio endpoint.
+        const form = new FormData();
+        form.append('script', script || '');
+        let endpoint = `${backendUrl}/audio-gen`;
+
+        if (mode === 'createVideo') {
+            // include video file (required) and optional audio
+            if (videoFile) form.append('video', videoFile);
+            if (audioFile) form.append('audio', audioFile);
+            endpoint = `${backendUrl}/video-gen`;
+        } else {
+            if (audioFile) form.append('audio', audioFile);
+        }
 
         try {
-            const resp = await fetch(`${backendUrl}/audio-gen`, {
+            const resp = await fetch(endpoint, {
                 method: 'POST',
                 body: form // browser sets Content-Type automatically
             });
@@ -650,77 +660,113 @@ const UploaderPage = ({ onGenerateStart, onGenerateFinish, mode = 'createVideo' 
 const ProcessingPage = ({ processType = 'createVideo', runId, onJobComplete }) => {
     const [progress, setProgress] = useState(0);
     const [audioUrl, setAudioUrl] = useState(null);
+    const [videoUrl, setVideoUrl] = useState(null);
     const [error, setError] = useState(null);
+    const [phase, setPhase] = useState('audio'); // 'audio' | 'video' | 'done'
 
     useEffect(() => {
         let mounted = true;
 
-        // Progress animation (visual only). We'll still poll for actual result.
+        // Generic progress animator: increments but respects current phase cap
         const interval = setInterval(() => {
-            setProgress(prev => Math.min(100, prev + 1));
-        }, 40);
-
-        // Polling for generated WAV. Stop after 2 minutes (120000ms).
-        const pollIntervalMs = 2000;
-        const timeoutMs = 120000;
-        let elapsed = 0;
-
-        const poll = async () => {
-            try {
-                const resp = await fetch(`http://localhost:8000/api/jobs/${runId}/audio`);
-                if (resp.ok) {
-                    // Received the file; create blob URL
-                    const blob = await resp.blob();
-                    const url = URL.createObjectURL(blob);
-                    if (!mounted) return;
-                    setAudioUrl(url);
-                    // if progress already finished or not, call onJobComplete when progress hits 100.
-                    if (progress >= 100) {
-                        onJobComplete(url);
-                    }
-                    return;
-                }
-                // else 404 -> not ready
-            } catch (err) {
-                console.error('Polling error', err);
-                // Non fatal; we'll try until timeout
-            }
-
-            elapsed += pollIntervalMs;
-            if (elapsed >= timeoutMs) {
-                if (mounted) setError('Timed out waiting for generated audio (2 minutes).');
-                return;
-            }
-
-            // schedule next poll
-            setTimeout(poll, pollIntervalMs);
-        };
-
-        // start first poll
-        if (runId) poll();
-
-        // watch progress completion to decide when to navigate
-        const progressWatcher = setInterval(() => {
-            if (!mounted) return;
-            setProgress(p => {
-                const next = Math.min(100, p + 1);
-                // when we hit 100 and we already have the audio, complete
-                if (next >= 100 && audioUrl) {
-                    clearInterval(progressWatcher);
-                    clearInterval(interval);
-                    onJobComplete(audioUrl);
-                }
-                return next;
+            setProgress(prev => {
+                const cap = phase === 'audio' ? 50 : 100;
+                if (prev >= cap) return prev;
+                return Math.min(cap, prev + 1);
             });
         }, 40);
+
+        const backendBase = 'http://localhost:8000/api';
+        const pollIntervalMs = 2000;
+        // Increase timeout to 15 minutes to allow long-running video generation
+        const timeoutMs = 15 * 60 * 1000; // 900000 ms
+
+        const pollForAudio = async () => {
+            let elapsed = 0;
+            while (mounted) {
+                try {
+                    const resp = await fetch(`${backendBase}/jobs/${runId}/audio`);
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        if (!mounted) return null;
+                        setAudioUrl(url);
+                        // immediately raise progress cap to 50
+                        setPhase('video');
+                        setProgress(50);
+                        return url;
+                    }
+                } catch (err) {
+                    console.error('(pollForAudio) error', err);
+                }
+                elapsed += pollIntervalMs;
+                if (elapsed >= timeoutMs) {
+                    if (mounted) setError('Timed out waiting for generated audio (2 minutes).');
+                    return null;
+                }
+                await new Promise(r => setTimeout(r, pollIntervalMs));
+            }
+            return null;
+        };
+
+        const pollForVideo = async () => {
+            let elapsed = 0;
+            while (mounted) {
+                try {
+                    const resp = await fetch(`${backendBase}/jobs/${runId}/video`);
+                    if (resp.ok) {
+                        const blob = await resp.blob();
+                        const url = URL.createObjectURL(blob);
+                        if (!mounted) return null;
+                        setVideoUrl(url);
+                        setPhase('done');
+                        // allow progress animator to reach 100 then immediately complete
+                        setProgress(100);
+                        return url;
+                    }
+                } catch (err) {
+                    console.error('(pollForVideo) error', err);
+                }
+                elapsed += pollIntervalMs;
+                if (elapsed >= timeoutMs) {
+                    if (mounted) setError('Timed out waiting for final video (2 minutes).');
+                    return null;
+                }
+                await new Promise(r => setTimeout(r, pollIntervalMs));
+            }
+            return null;
+        };
+
+        // Orchestrate polling depending on process type
+        (async () => {
+            if (!runId) return;
+            if (processType === 'createVideo') {
+                // Step 1: wait for audio gen
+                const a = await pollForAudio();
+                if (!a) return; // error/timeout already set
+
+                // Step 2: wait for video/lip-sync
+                const v = await pollForVideo();
+                if (!v) return;
+
+                // Finished: notify parent with final video URL
+                if (mounted) onJobComplete(v);
+            } else {
+                // cloneAudio: behave as before (single audio step)
+                const a = await pollForAudio();
+                if (!a) return;
+                // Wait until visual progress reaches 100
+                setProgress(100);
+                if (mounted) onJobComplete(a);
+            }
+        })();
 
         return () => {
             mounted = false;
             clearInterval(interval);
-            clearInterval(progressWatcher);
         };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [runId, onJobComplete, audioUrl]);
+    }, [runId, onJobComplete, processType, phase]);
 
     const isVideo = processType === 'createVideo';
     const title = isVideo ? 'Processing your video...' : 'Cloning your audio...';
@@ -745,7 +791,7 @@ const ProcessingPage = ({ processType = 'createVideo', runId, onJobComplete }) =
 };
 
 // --- MODIFIED Results Page Component ---
-const ResultsPage = ({ onRestart, resultType = 'createVideo', generatedAudioUrl = null }) => {
+const ResultsPage = ({ onRestart, resultType = 'createVideo', generatedAudioUrl = null, generatedVideoUrl = null }) => {
 
     const isVideoResult = resultType === 'createVideo';
 
@@ -760,8 +806,18 @@ const ResultsPage = ({ onRestart, resultType = 'createVideo', generatedAudioUrl 
             return;
         }
 
-        // Fallback download behavior for video or missing url
-        alert('Download not implemented for video in this demo.');
+        if (isVideoResult && generatedVideoUrl) {
+            const a = document.createElement('a');
+            a.href = generatedVideoUrl;
+            a.download = 'deepsync_final_video.mp4';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            return;
+        }
+
+        // Fallback download behavior
+        alert('Download not available for this result.');
     };
 
     return (
@@ -769,12 +825,18 @@ const ResultsPage = ({ onRestart, resultType = 'createVideo', generatedAudioUrl 
             <h2>{isVideoResult ? 'Your Generated Video' : 'Your Cloned Audio'}</h2>
             <div className="results-grid">
                 {isVideoResult ? (
-                    <div className="video-player-mockup">
-                        <div className="play-button-mockup">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                    generatedVideoUrl ? (
+                        <div className="video-player-area">
+                            <video controls src={generatedVideoUrl} style={{maxWidth: '100%'}} />
                         </div>
-                        <p>Generated Video Ready</p>
-                    </div>
+                    ) : (
+                        <div className="video-player-mockup">
+                            <div className="play-button-mockup">
+                                <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"></path></svg>
+                            </div>
+                            <p>Generated Video Ready</p>
+                        </div>
+                    )
                 ) : (
                     <div className="audio-player-area">
                         {generatedAudioUrl ? (
@@ -832,6 +894,7 @@ function App() {
     const [processType, setProcessType] = useState('createVideo'); // 'createVideo' or 'cloneAudio'
     const [currentRunId, setCurrentRunId] = useState(null);
     const [generatedAudioUrl, setGeneratedAudioUrl] = useState(null);
+    const [generatedVideoUrl, setGeneratedVideoUrl] = useState(null);
 
     // This now receives 'createVideo' or 'cloneAudio'
     // type: 'createVideo' | 'cloneAudio', runId: job id returned from backend
@@ -843,10 +906,14 @@ function App() {
         setPage('processing');
     };
     
-    const handleGenerateFinish = (audioUrl) => {
-        // When processing completes (audio is ready), store url then navigate to results
-        if (audioUrl) {
-            setGeneratedAudioUrl(audioUrl);
+    const handleGenerateFinish = (resultUrl) => {
+        // resultUrl is either the final audio (cloneAudio) or the final video (createVideo)
+        if (processType === 'cloneAudio') {
+            if (resultUrl) setGeneratedAudioUrl(resultUrl);
+            setGeneratedVideoUrl(null);
+        } else {
+            if (resultUrl) setGeneratedVideoUrl(resultUrl);
+            setGeneratedAudioUrl(null);
         }
         setPage('results');
     };
@@ -895,7 +962,7 @@ function App() {
                 
                 {page === 'processing' && <ProcessingPage processType={processType} runId={currentRunId} onJobComplete={handleGenerateFinish} />}
 
-                {page === 'results' && <ResultsPage onRestart={handleRestart} resultType={processType} generatedAudioUrl={generatedAudioUrl} />}
+                {page === 'results' && <ResultsPage onRestart={handleRestart} resultType={processType} generatedAudioUrl={generatedAudioUrl} generatedVideoUrl={generatedVideoUrl} />}
             </main>
 
             <Footer />
